@@ -1,0 +1,100 @@
+# dsh-a2a-bridge bundle patch.
+#
+# KEEP THIS FILE PLAIN YAML.
+# The installer's package validation parses this file with a STRICT loader that
+# rejects `!!js` expressions, even though the runtime overlay loader accepts
+# them. Using `!!js` here makes the package fail validation at install time.
+#
+# Secrets never appear here. Peer tokens are referenced by NAME
+# (e.g. `tokenEnv: A2A_PEER_ALICE`) and resolved through `ctx.credentials`
+# on every request, so rotating a token takes effect on the next request with
+# no restart and no config edit.
+
+- insert:
+    - id: a2a-bridge
+      name: dsh-a2a-bridge
+      config:
+        basePath: /a2a
+
+        # Set this when serving behind a reverse proxy or from a LAN address.
+        # Publishing the webserver's bind address (typically 127.0.0.1) on a
+        # card is always wrong.
+        # publicUrl: http://192.168.1.10:3080
+
+        card:
+          name: dsh-a2a-bridge
+          description: A DeepSeek Harness agent reachable over A2A.
+          public: true
+          skills: []
+          extendedSkills: []
+
+        inbound:
+          enabled: true
+
+          # peer name -> credential REFERENCE name (never the token itself).
+          # peers:
+          #   alice: { tokenEnv: A2A_PEER_ALICE }
+
+          peers: {}
+          trustedPeers: []
+
+          rateLimitPerMinute: 60
+          maxContextTurns: 5
+          sendMode: block
+          blockTimeoutMs: 60000
+          contextIdleTtlMs: 1800000
+          maxResidentContexts: 64
+
+          isolation:
+            workspaceMode: per-peer
+            # `workspaceRoot` is deliberately OMITTED here.
+            #
+            # This file ships inside the npm package (`package.json` -> files),
+            # so an absolute path in it would point every OTHER machine at a
+            # directory that does not exist. That was audit S1: the schema used
+            # to make this field required, which forced this bundle patch to
+            # hard-code one developer's home directory.
+            #
+            # Empty now means "derive <DSH_HOME>/a2a-workspaces from the running
+            # Harness" (`homePaths` -> DSH_HOME -> ~/.dsh). Set a value here only
+            # when this deployment needs one specific shared root, for example:
+            #   workspaceRoot: <absolute path on this deployment's disk>
+
+          # Spec §3.6.2 is MUST-level: an empty A2A-Version header means 0.3.
+          # true  -> reject a missing header with -32009 (follows the spec)
+          # false -> treat a missing header as 1.0 (deployment policy)
+          strictVersionHeader: true
+
+          # ADR-011: the listener THIS PLUGIN owns. It does not use
+          # ctx.webServer, because the Desktop shell pins that to 127.0.0.1
+          # and a peer machine could never reach it.
+          #
+          # host MUST be one concrete local address. A wildcard (0.0.0.0 / ::)
+          # is refused at load time: binding every interface would expose this
+          # agent's tools to whatever network the machine is on.
+          #
+          # Loopback  -> only this machine can call the agent (safe default).
+          # LAN       -> set the machine's real LAN address, e.g. 192.168.1.10,
+          #              and open that port inbound in the firewall.
+          listen:
+            host: 127.0.0.1
+            port: 3081
+
+        outbound:
+          enabled: true
+          providerName: a2a
+
+          # Static contact list + Agent Card discovery (ADR-004).
+          # contacts:
+          #   - name: remote-desktop
+          #     url: http://192.168.1.11:3080
+          #     agentCardPath: /.well-known/agent-card.json
+          #     tokenEnv: A2A_REMOTE_DESKTOP_TOKEN
+          #     timeoutMs: 300000
+
+          contacts: []
+
+        session:
+          workspaceTitlePrefix: A2A
+          contextIdPrefix: a2a
+          mirrorRemoteProgress: true

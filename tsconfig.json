@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2024"],
+    "types": ["node"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    /**
+     * `src/client.ts` is a BROWSER CLASSIC SCRIPT: it must not be emitted as an
+     * ESM module (TypeScript would append `export {}`, which a classic <script>
+     * cannot parse). Under NodeNext a file in a `"type": "module"` package is
+     * treated as a module even without imports, so module detection is pinned
+     * to the import/export-driven rule. Every other file in this project has
+     * real imports/exports and is unaffected.
+     */
+    "moduleDetection": "legacy",
+    "rootDir": "src",
+    "outDir": "lib",
+
+    "strict": true,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": false
+  },
+  "include": ["src/**/*.ts"]
+}

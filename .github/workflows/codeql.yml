@@ -1,0 +1,74 @@
+# CodeQL 静态安全分析（javascript-typescript）。
+#
+# 为什么单独一个工作流：
+#   - CodeQL 需要 `security-events: write` 权限，不应污染 CI 门禁的只读权限；
+#   - 分析耗时明显长于门禁链，失败原因（提取/构建）也不同，分开跑便于定位；
+#   - 支持 push / PR / 每周定时三种触发，定时扫描能覆盖依赖与规则更新。
+#
+# 说明（与 CI 相同的环境背景）：
+#   - 本机 `@deepseek-ai/*` 有 0 个 `.d.ts`，tsconfig 保留
+#     `noImplicitAny:false` + `skipLibCheck:true`；CodeQL 只做源码提取，
+#     缺类型声明不影响它建库，**不要**为了让 CodeQL 好过而收紧这两个开关。
+#   - 仓库当前没有 package-lock.json，所以这里**不执行 npm ci**：JS/TS 的
+#     autobuild 直接提取源码，不需要 node_modules。若将来引入代码生成步骤，
+#     再在 init 之前补「安装依赖 → 生成」两步。
+#   - 本机未安装 node_modules，本工作流未运行验证。
+#   - 私有仓库需要 GitHub Advanced Security / Code Security 才能上传 SARIF；
+#     公开仓库无需额外配置。
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 每周一 03:27 UTC（避开整点高峰）。
+    - cron: '27 3 * * 1'
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript]
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup-node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # 只查安全类问题，避免把风格告警变成噪音。
+          queries: security-extended
+
+      # JS/TS 无需编译；autobuild 会完成源码提取。不要改成手写 build，
+      # 否则会重新引入 package-lock.json 依赖。
+      - name: autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'

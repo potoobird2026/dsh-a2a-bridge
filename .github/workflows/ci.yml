@@ -1,0 +1,98 @@
+# CI 门禁链 —— 每一步一个独立 step，禁止用 && 串起来。
+#
+# 为什么必须拆开（自检背景，勿删）：
+#   1. **Vitest 不做类型检查**。`npm test` 全绿 ≠ 类型正确；本仓库有实例：
+#      tsc 报 25 个错，vitest 仍全部通过。所以 `typecheck` 必须是独立门禁，
+#      不能靠 test 代劳。
+#   2. **`tsc` 报错仍然会 emit**。如果用 `npm run typecheck && npm run build`
+#      串成一条，typecheck 非零直接中断，build 被**静默跳过**，`lib/` 里缺文件，
+#      而后续步骤可能因为读的是 src 或半份产物而假绿。拆成独立 step 后，
+#      typecheck 红了 build 也不会假装成功；反过来 build 步骤本身仍会暴露
+#      emit 产物，再由 verify:exports 兜底检查。
+#   3. 本机 `@deepseek-ai/*` 有 **0 个 `.d.ts`**，tsconfig 已设
+#      `noImplicitAny:false` + `skipLibCheck:true`，**不要改回去**，否则会多出
+#      大量无法修复的第三方报错，门禁失去意义。
+#   4. 本机未安装 node_modules，本工作流**未运行验证**；首次跑 CI 请先看
+#      `npm ci` 是否因缺少 package-lock.json 失败（见下）。
+#
+# 前置条件：
+#   - `npm ci` 严格要求仓库里存在 `package-lock.json`。**该文件现在已在仓库根**
+#     （约 61 KB，由本地 `npm install` 生成后提交），因此本工作流可以直接用
+#     `npm ci`。若它再次丢失，`npm ci` 会在该步失败 —— 不要用 `npm install`
+#     掩盖，门禁要验证的是「锁文件可复现安装」。
+#   - `cache: npm` 现在可以启用了（缓存依赖锁文件）。本轮刻意仍未加：先确认
+#     一次真实 CI 绿，再加缓存，避免把「缓存命中」当成「安装成功」的证据。
+#   - Node 版本：package.json `engines.node` 要求 `>=22.19.0`，`22` 满足。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: 门禁链（typecheck / build / test / verify）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup-node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # 需要 package-lock.json；缺失会在这里失败，不要用 npm install 掩盖——
+      # 门禁要验证的是「锁文件可复现安装」。
+      - name: npm ci
+        run: npm ci
+
+      # 独立门禁 1：Vitest 不做类型检查，这一条不能被 test 替代。
+      - name: typecheck
+        run: npm run typecheck
+
+      # 独立门禁 2：tsc 报错仍会 emit，所以 build 不能与 typecheck 串联。
+      - name: build
+        run: npm run build
+
+      # 独立门禁 3：单元测试（默认排除 tests/live/**，真机测试见 tests/live/README.md）。
+      - name: test
+        run: npm test
+
+      # 独立门禁 4：产物存在性。build 之后 lib/ 必须真的包含 exports 指向的文件。
+      - name: verify exports
+        run: npm run verify:exports
+
+      # 独立门禁 5：package.json.version 与源码/README 的版本声明一致。
+      # 当前没有版本常量时为 advisory（脚本会打印明确的跳过原因）。
+      - name: verify version
+        run: npm run verify:version
+
+      # 独立门禁 6：ADR-008「禁硬编码」。
+      # 为什么必须是独立 step：tsc 与 vitest **都看不见**硬编码 ——
+      # 把端口写进模块、把绝对路径写进随包 cordis.patch.yml，类型全对、
+      # 用例全绿，只有换一台机器才会暴露。
+      #
+      # 当前基线（2026-10-27 实测）：error 0 / warn 0，exit 0。
+      # 规则本身经失败注入验证有效：注入端口/主机字面量/中文文案后 error 3 / warn 3。
+      # 历史审计（docs/standards-audit.md §3.1）记录的 24 条命中已全部消化，
+      # 包括 src/index.ts 的 `setTimeout(..., 0)` —— 该处已改为引用常量
+      # SEAM_PROBE_DELAY_MS，语义（"下一拍"）写在常量注释里。
+      #
+      # 这里直接用 `node` 而不是 `npm run verify:no-hardcode`：脚本已经在仓库里，
+      # 直接调用不依赖 Lead 何时往 package.json 加别名（避免"Missing script:"
+      # 把一次文档问题伪装成一次构建问题）。别名加好后两种写法等价。
+      - name: verify no hardcode
+        run: node scripts/verify-no-hardcode.mjs
